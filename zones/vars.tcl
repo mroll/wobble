@@ -1,4 +1,3 @@
-
 # Echo request dictionary.
 #
 proc ::wibble::zone::vars {state} {

@@ -7,4 +7,6 @@ proc ::wibble::zone::notfound {state} {
     sendresponse [dict get $state response]
 }
 
+interp alias {} ::wibble::zone::404 {} ::wibble::zone::notfound
+
 
