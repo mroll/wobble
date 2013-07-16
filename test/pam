@@ -1,0 +1,10 @@
+#!/usr/bin/env tclkit8.6
+#
+lappend auto_path wobble/modules/lib
+
+source test/test.tcl 
+
+package require pam
+
+? "pam Pass" { pam::authenticate chkpasswd matt "Tennis17" } 	1
+? "pam Fail" { pam::authenticate chkpasswd matt "" 	    }	0

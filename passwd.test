@@ -1,0 +1,21 @@
+
+proc dict? { args } {		# This is really annoying!!
+    try { dict get {*}$args
+    } on error message {
+	puts "dict? : $message"
+    }
+}
+
+wibble::passwd data {
+    john	XXX	john@john.com
+}
+
+wibble::passwd file etc/passwd
+
+
+wibble::passwd update xxx passwd WINK
+wibble::passwd update xxx email  WONK
+
+wibble::passwd write $wibble::passwd::passwd xxx
+
+puts [wibble::passwd check xxx WINK]

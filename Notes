@@ -1,0 +1,36 @@
+
+Wobble
+	Wibble http server
+
+	Packaged Content
+	Static content
+	Active content
+		Template
+		SCGI
+		CGI
+
+	https
+
+	WebSocket
+
+	Session Manger
+		Authentication
+			Embeded Data
+			Password File
+			PAM
+
+		Authorization
+			Embeded Data
+			Access File
+			Dot Access File
+			PAM?
+
+	Full Text Search
+
+	Multi Architecture Binaries
+		OS X
+		Windows
+		Linux i386
+			
+		
+		
