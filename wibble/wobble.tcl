@@ -42,7 +42,7 @@ if { 0 } {
     wibble::secure server-public.pem server-private.pem
 }
 
-set argv [lassign $argv option]
+# set argv [lassign $argv option]
 
 
 proc ::ws-demo { event sock { data {} } } {
