@@ -1,6 +1,6 @@
 # Echo request dictionary.
 #
-proc ::wibble::zone::vars {state} {
+proc ::wibble::vars {state} {
     dict set state response status 200
     dict set state response header content-type "" text/html
     dict set state response content [template {

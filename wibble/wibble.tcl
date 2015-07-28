@@ -1,76 +1,50 @@
 #!/usr/bin/env tclsh
 # Wibble - a pure-Tcl Web server.  http://wiki.tcl.tk/23626
-# Copyright 2012 Andy Goth.  mailto/andrew.m.goth/at/gmail/dot/com
+# Copyright 2011 Andy Goth.  mailto/andrew.m.goth/at/gmail/dot/com
 # Available under the Tcl/Tk license.  http://tcl.tk/software/tcltk/license.html
 
 package require Tcl 8.6
+package provide wibble 0.1
 
 # Define the wibble namespace.
 namespace eval ::wibble {
-    variable version 0.4.3
     variable zonehandlers
-
-    # New: Potentially save time by pre-selecting only matching handlers to be
-    # evaluated for possible response generation.
-    # Set value to 1 to activate. As is, default behavior is unchanged.
-    variable prequalify_handlers 0
 }
-
-# ============================== zone handlers ================================
-
-# Define the ::wibble::zone namespace.
-#
-namespace eval ::wibble::zone {
-    namespace path ::wibble
-}
-
-
 
 # ============================ utility procedures =============================
 
-# [dict getnull] is like [dict get] but returns empty string for missing keys.
-proc ::tcl::dict::getnull {dictionary args} {
-    if {[exists $dictionary {*}$args]} {
-        get $dictionary {*}$args
-    }
-}
-namespace ensemble configure dict -map [dict replace\
-    [namespace ensemble configure dict -map] getnull ::tcl::dict::getnull]
-
-# Expand a template.
-proc ::wibble::template {body} {
+# Compile a template.
+proc ::wibble::compiletemplate {command template} {
     set script ""
     set pos 0
-    foreach match [regexp -line -all -inline -indices {^%.*$} $body] {
+    foreach match [regexp -line -all -inline -indices {^%.*$} $template] {
         lassign $match from to
-        set str [string range $body $pos [expr {$from - 1}]]
+        set str [string range $template $pos [expr {$from - 2}]]
         if {$str ne ""} {
-            append script "append # \[" [list subst $str] \]\n
+            append script "$command \[[list subst $str\n]\]\n"
         }
-        append script [string range $body [expr {$from + 1}] $to]\n
+        append script [string range $template [expr {$from + 1}] $to]\n
         set pos [expr {$to + 2}]
     }
-    set str [string range $body $pos end]
+    set str [string range $template $pos end]
     if {$str ne ""} {
-        append script "append # \[" [list subst $str] \]
+        append script "$command \[[list subst $str]\]"
     }
-    uplevel 1 "set # {}; $script; set #"
+    string trimright $script
 }
 
-# Flatten a request/response state dictionary into a form that's easier to log.
-proc ::wibble::dumpstate {data {prefix ""}} {
+# Flatten the request dictionary into a form that's easier to log.
+proc ::wibble::dumprequest {data {prefix ""}} {
     if {![llength $data]} {
         return [list $prefix ""]
     }
     set result {}
-    dict for {key val} $data {
+    foreach {key val} $data {
         set key [concat $prefix [list $key]]
-        if {$key in {header accept query "header content-type"}
-         || (([lindex $key 0] in {post query}
-           || [lrange $key 0 1] in {"header cookie" "header set-cookie"})
-          && ([llength $key] < 3
-           || ([llength $key] == 3 && [lindex $key 2] ne "")))} {
-            lappend result {*}[dumpstate $val $key]
+        if {$key in {header "header content-type" "header cookie" accept query}
+         || ([lindex $key 0] in {post query} && ([llength $key] < 3
+         || ([llength $key] == 3 && [lindex $key 2] ne "")))} {
+            lappend result {*}[dumprequest $val $key]
         } elseif {[string length $val] > 512} {
             lappend result $key (len=[string length $val])
         } else {
@@ -80,20 +54,11 @@ proc ::wibble::dumpstate {data {prefix ""}} {
     return $result
 }
 
-# New: create and maintain namespace var with current time in secs,
-# to save excessive calls to [clock seconds]
-proc ::wibble::update_clock_seconds {} {
-    variable clock_seconds
-    set clock_seconds [clock seconds]
-    after 250 ::wibble::update_clock_seconds
-}
-
 # ========================= network input procedures ==========================
 
 # Get a line of data from the current coroutine's socket.
 proc ::wibble::getline {} {
-    set info_coroutine [info coroutine]
-    set socket [namespace tail $info_coroutine]
+    set socket [namespace tail [info coroutine]]
     while {1} {
         if {[chan gets $socket line] >= 0} {
             return $line
@@ -102,14 +67,13 @@ proc ::wibble::getline {} {
         } elseif {[chan pending input $socket] > 4096} {
             error "line length exceeds limit of 4096 bytes"
         }
-        icc get $info_coroutine readable
+        icc get [info coroutine] readable
     }
 }
 
 # Get a block of data from the current coroutine's socket.
 proc ::wibble::getblock {size} {
-    set info_coroutine [info coroutine]
-    set socket [namespace tail $info_coroutine]
+    set socket [namespace tail [info coroutine]]
     while {1} {
         set chunklet [chan read $socket $size]
         set size [expr {$size - [string length $chunklet]}]
@@ -119,23 +83,22 @@ proc ::wibble::getblock {size} {
         } elseif {$size == 0} {
             return $chunk
         }
-        icc get $info_coroutine readable
+        icc get [info coroutine] readable
     }
 }
 
 # ==================== conversion and parsing procedures ======================
 
-# Encode for HTML by substituting angle brackets, ampersands, space sequences,
-# and line breaks.
+# Encode for HTML by substituting angle brackets, ampersands, line breaks, and
+# space sequences.
 proc ::wibble::enhtml {str} {
     string map {< &lt; > &gt; & &amp; \r "" \n "<br />\n" "  " \ &\#160;} $str
 }
 
 # Encode for HTML tag attribute by substituting angle brackets, ampersands,
-# space sequences, and single and double quotes.
+# double quotes, and space sequences.
 proc ::wibble::enattr {str} {
-    string map {< &lt; > &gt; & &amp; \r "" \n "" "  " \ &\#160;
-                ' &apos; \" &quot;} $str
+    string map {< &lt; > &gt; & &amp; \r "" \n "" \" &quot; "  " \ &\#160;} $str
 }
 
 # Encode for HTML <pre> by substituting angle brackets and ampersands.
@@ -146,13 +109,11 @@ proc ::wibble::enpre {str} {
 # Encode a query string.  The caller must prepend the question mark.
 proc ::wibble::enquery {args} {
     set query {}
-    set encode {apply {{str} {string map { " " +}\
-        [enhex $str {[^-^,./'|!$\w ]}]} ::wibble}}
     foreach {key val} [concat {*}$args] {
         if {[dict exists $val ""]} {
-            lappend query [{*}$encode $key]=[{*}$encode [dict get $val ""]]
+            lappend query [enurl $key]=[enurl [dict get $val ""]]
         } else {
-            lappend query [{*}$encode $key]
+            lappend query [enurl $key]
         }
     }
     join $query &
@@ -164,18 +125,17 @@ proc ::wibble::dequery {str} {
     foreach elem [split $str &] {
         regexp {^([^=]*)(?:(=.*))?$} $elem _ key val
         if {$val ne ""} {
-            set val [list "" [decode \
-                [string range $val 1 end]]]
+            set val [list "" [deurl [string range $val 1 end]]]
         }
-        lappend query [decode $key] $val
+        lappend query [deurl $key] $val
     }
     return $query
 }
 
 # Encode by substituting most non-alphanumerics with hexadecimal codes.
-proc ::wibble::enhex {str {pattern {[^-^,./'=+|!$\w]}}} {
+proc ::wibble::enhex {str} {
     set pos 0
-    while {[regexp -indices -start $pos $pattern $str range]} {
+    while {[regexp -indices -start $pos {[^-^,./'=+|!$\w]} $str range]} {
         binary scan [string range $str {*}$range] H2 char
         set str [string replace $str {*}$range %$char]
         set pos [expr {[lindex $range 0] + 3}]
@@ -185,51 +145,36 @@ proc ::wibble::enhex {str {pattern {[^-^,./'=+|!$\w]}}} {
 
 # Decode hexadecimal encoding.
 proc ::wibble::dehex {str} {
-    subst -novariables -nocommands\
-        [regsub -all {%([[:xdigit:]]{2})} [string map {\\ \\\\} $str] {\\u00\1}]
-}
-
-# New: replace dehex in places to save extra call to [string map]
-proc ::wibble::decode {str} {
-    subst -novariables -nocommands\
-        [regsub -all {%([[:xdigit:]]{2})} [string map {+ { } \\ \\\\} $str] {\\u00\1}]
-}
-
-# Encode an HTTP time/date.
-proc ::wibble::entime {time} {
-    variable clock_seconds
-    switch [lindex $time 0] {
-        abstime {set time [lindex $time 1]}
-        reltime {set time [expr {$clock_seconds + [lindex $time 1]}]}
+    set pos 0
+    while {[regexp -indices -start $pos {%([[:xdigit:]]{2})} $str range code]} {
+        set char [binary format H2 [string range $str {*}$code]]
+        set str [string replace $str {*}$range $char]
+        set pos [expr {[lindex $range 0] + 1}]
     }
-    clock format $time -format "%a %d-%b-%Y %T %Z" -timezone :GMT
+    return $str
 }
 
-# Decode an HTTP time/date.
-proc ::wibble::detime {str} {
-    list abstime [clock scan $str]
+# Encode for URLs by substituting plus, space, and most other non-alphanumerics.
+proc ::wibble::enurl {str} {
+    enhex [string map {+ %2b " " +} $str]
+}
+
+# Decode URL encoding.
+proc ::wibble::deurl {str} {
+    dehex [string map {+ " "} $str]
 }
 
 # Decode header list encoding.
 proc ::wibble::delist {separator str} {
     regexp -all -inline [dict get {
-semicolon {(?:[^;"=]+=)?(?:[Ww]/)?"(?:[^\\"]|\\.)*"|\((?:[^\\()]|\\.)*\)|[^;]+}
-comma     {(?:[^,"=]+=)?(?:[Ww]/)?"(?:[^\\"]|\\.)*"|\((?:[^\\()]|\\.)*\)|[^,]+}
-semicomma {(?:[^;,"=]+=)?"(?:[^\\"]|\\.)*"|\((?:[^\\()]|\\.)*\)|[^;,]+}
-space     {"(?:[^\\"]|\\.)*"|\((?:[^\\()]|\\.)*\)|[^"()\\\s]+}
+        semicolon {"(?:[^\\"]|\\.)*"|\((?:[^\\()]|\\.)*\)|[^;]+}
+        comma     {"(?:[^\\"]|\\.)*"|\((?:[^\\()]|\\.)*\)|[^,]+}
+        semicomma {"(?:[^\\"]|\\.)*"|\((?:[^\\()]|\\.)*\)|[^,;]+}
+        space     {"(?:[^\\"]|\\.)*"|\((?:[^\\()]|\\.)*\)|[^"()\\\s]+}
     } $separator] $str
 }
 
-# Encode HTTP header quoting when appropriate.
-proc ::wibble::enquote {str} {
-    if {$str eq "" || [regexp {[\0-\040\177\(\)<>@,;:\\"/\[\]\?={}]} $str]} {
-        return \"[regsub -all {[\0-\010\012-\037\177"\\]} $str {\\&}]\"
-    } else {
-        return $str
-    }
-}
-
-# Decode HTTP header quoting.
+# Decode header quoting.
 proc ::wibble::dequote {str} {
     if {([string index $str 0] eq "\"" && [string index $str end] eq "\"")
      || ([string index $str 0] eq "(" && [string index $str end] eq ")")} {
@@ -239,148 +184,7 @@ proc ::wibble::dequote {str} {
     }
 }
 
-# Encode an HTTP entity tag.
-proc ::wibble::entag {tag} {
-    lassign $tag type val
-    switch $type {
-    tag {return \"[regsub -all {[\0-\010\012-\037\177"\\]} $val {\\&}]\"}
-    weaktag {return W/\"[regsub -all {[\0-\010\012-\037\177"\\]} $val {\\&}]\"}
-    }
-}
-
-# Decode an HTTP entity tag.
-proc ::wibble::detag {str} {
-    if {[string range $str 0 2] in {W/\" w/\"}} {
-        list weaktag [dequote [string range $str 2 end]]
-    } else {
-        list tag [dequote $str]
-    }
-}
-
-# Encode HTTP headers.
-proc ::wibble::enheader {header} {
-    set str ""
-    set nl ""
-    dict for {key val} $header {
-        if {![llength $val]} {continue}
-
-        set comma ""
-        switch $key {
-        set-cookie {
-            # Value is a list of cookie definitions.
-            dict for {key2 val2} $val {
-                append str "$nl$key: [enhex $key2]=[enhex [dict get $val2 ""]]"
-                dict for {key3 val3} $val2 {
-                    switch $key3 {
-                    domain - path {
-                        append str \;$key3=[string map {; %3b} $val3]
-                    } port {
-                        append str \;port
-                        if {[llength $val3]} {
-                            append str =\"[join $val3 ,]\"
-                        }
-                    } discard - httponly - secure {
-                        append str \;$key3
-                    } expires {
-                        switch [lindex $val3 0] {
-                            abstime {append str \;expires=[entime $val3 1]}
-                            reltime {append str \;max-age=[lindex $val3 1]}
-                        }
-                    }}
-                }
-                set nl \n
-            }
-        } cache-control - pragma {
-            # Value has format "subkey1=subval1,subkey2=subval2,subkey3".
-            append str "$nl$key: "
-            dict for {key2 val2} $val {
-                append str $comma$key2
-                if {[dict exists $val2 ""]} {
-                    if {$key eq "cache-control"&& $key2 in {private no-cache}} {
-                        append str =\"[join [dict get $val2 ""] ,]\"
-                    } else {
-                        append str =[enquote [dict get $val2 ""]]
-                    }
-                }
-                set comma ,
-            }
-        } accept-ranges - allow - connection - content-encoding -
-        content-language - proxy-authenticate - trailer - upgrade - vary - via -
-        www-authenticate {
-            # Value has format "elem1,elem2".
-            append str "$nl$key: "
-            foreach val2 $val {
-                append str $comma[enquote $val2]
-                set comma ,
-            }
-        } warning {
-            # Value has format "elem1.1 elem1.2 elem1.3,elem2.1 elem2.2".
-            append str "$nl$key: "
-            foreach val2 $val {
-                append str $comma
-                set space ""
-                foreach val3 $val2 {
-                    append str $space[enquote $val3]
-                    set space " "
-                }
-                set comma ,
-            }
-        } transfer-encoding {
-            # Value has format "elem1;subkey1=subval1;subkey2=subval2,elem2".
-            append str "$nl$key: "
-            foreach val2 $val {
-                append str [dict get $val2 ""]
-                dict for {key3 val3} $val2 {
-                    if {$key3 ne ""} {
-                        append str \;$key3=[enquote $val3]
-                    }
-                }
-            }
-        } content-disposition - content-type {
-            # Value has format "elem;subkey1=subval1;subkey2=subval2".
-            append str "$nl$key: [dict get $val ""]"
-            dict for {key2 val2} $val {
-                if {$key2 ne ""} {
-                    append str \;$key2=[enquote $val2]
-                }
-            }
-        } server {
-            # Value is a server agent definition.
-            append str $nl$key:
-            foreach val2 $val {
-                if {[string index $elem 0] eq "("} {
-                    append str " ([regsub -all {[\0-\010\012-\037\177()\\]}\
-                        $val2 {\\&}])"
-                } else {
-                    append str " [enquote $val2]"
-                }
-            }
-        } date - expires - last-modified {
-            # Value is an absolute time.
-            append str "$nl$key: [entime $val]"
-        } retry-after {
-            # Value is an absolute or relative time.
-            switch [lindex $val 0] {
-                abstime {append str "$nl$key: [entime $val 1]"
-                reltime {append str "$nl$key: [lindex $val 1]"}
-            }}
-        } etag {
-            # Value is an entity tag.
-            append str "$nl$key: [entag $val]"
-        } age - content-length - content-location - content-md5 -
-        content-range - location {
-            # Value is a never-quoted string.
-            append str "$nl$key: $val"
-        } default {
-            # Value is a sometimes-quoted string.
-            append str "$nl$key: [enquote $val]"
-        }}
-        set nl \n
-    }
-    return $str
-}
-
-# Decode HTTP headers.
+# Decode headers.
 proc ::wibble::deheader {str} {
     set header {}
     foreach {_ key raw} [regexp -all -inline -expanded -lineanchor {
@@ -392,18 +196,18 @@ proc ::wibble::deheader {str} {
         set val {}
         switch $key {
         cookie {
-            # Value is one or more cookie definitions.
+            # Value is a cookie definition.
             set common {}
             set cookie ""
             foreach elem [delist semicomma $raw] {
                 regexp {\s*([^\s=]*)(?:\s*=(.*))?} $elem _ key2 val2
                 set key2 [string tolower $key2]
                 if {[string index $key2 0] eq "\$"} {
-                    set key2 [string trim [string range $key2 1 end]]
+                    set key2 [dehex [string range $key2 1 end]]
                     if {$cookie eq ""} {
-                        dict set common $key2 [dequote $val2]
+                        dict set common $key2 [dehex $val2]
                     } else {
-                        dict set params $key2 [dequote $val2]
+                        dict set params $key2 [dehex $val2]
                     }
                 } else {
                     if {$cookie ne ""} {
@@ -418,37 +222,20 @@ proc ::wibble::deheader {str} {
                 lappend val $cookie $params
             }
         } cache-control - pragma {
-            # Value has format "subkey1=subval1,subkey2=subval2,subkey3".
+            # Value has format "subkey1=subval1,subkey2=subval2".
             foreach elem [delist comma $raw] {
                 regexp {\s*([^\s=]+)(?:\s*(=.*))?} $elem _ key2 val2
                 if {$val2 ne ""} {
                     set val2 [dequote [string trim [string range $val2 1 end]]]
-                    if {$key eq "cache-control"&& $key2 in {private no-cache}} {
-                        set val2 [delist comma $val2]
-                    }
                     set val2 [list "" $val2]
                 }
                 lappend val [string tolower $key2] $val2
             }
-        } connection - content-encoding - content-language - none-match -
-        trailer - upgrade - vary - via {
+        } connection - content-encoding - content-language - if-match -
+        if-none-match - trailer - upgrade - vary - via - warning {
             # Value has format "elem1,elem2".
             foreach elem [delist comma $raw] {
                 lappend val [dequote [string trim $elem]]
-            }
-        } if-match - if-none-match {
-            # Value has format "tag1,tag2".
-            foreach elem [delist comma $raw] {
-                lappend val [detag [string trim $elem]]
-            }
-        } warning {
-            # Value has format "elem1.1 elem1.2 elem1.3,elem2.1 elem2.2".
-            foreach elem [delist comma $raw] {
-                set val2 {}
-                foreach elem2 [delist space $elem] {
-                    lappend val2 [dequote $elem2]
-                }
-                lappend val $val2
             }
         } accept - accept-charset - accept-encoding - accept-language -
         expect - te - transfer-encoding {
@@ -480,24 +267,210 @@ proc ::wibble::deheader {str} {
                     lappend val [dequote $elem]
                 }
             }
-        } date - expires - if-modified-since - if-unmodified-since -
-        last-modified {
-            # Value is an absolute time.
-            set val [detime $raw]
-        } if-range {
-            # Value is an absolute time or an entity tag.
-            if {[string index $raw end] eq "\""} {
-                set val [detag $raw]
-            } else {
-                set val [detime $raw]
-            }
         } default {
             # Value has format "elem".
-            set val [dequote $raw]
+            set val $raw
         }}
         dict set header $key $val
     }
     return $header
+}
+
+# =================== inter-coroutine communication system ====================
+
+# The inter-coroutine communication procedures are in the [icc] ensemble.
+namespace eval ::wibble::icc {
+    namespace export configure get put
+    namespace ensemble create
+    variable feeds
+}
+
+# Lapse (remove) a feed that nothing's interested in anymore.
+proc ::wibble::icc::lapse {fid} {
+    variable feeds
+
+    # Clean up the feed's data structures.
+    set lapsescript [dict get $feeds $fid lapsescript]
+    dict unset feeds $fid
+
+    # Run the lapse script, which may be empty string.
+    uplevel #0 $lapsescript
+}
+
+# Adjust an ICC feed's configuration, creating the feed in the process.
+# [icc configure $fid accept|reject ?filter? ?...?]
+# [icc configure $fid lapse ?timeout_milliseconds? ?lapsescript?]
+proc ::wibble::icc::configure {fid operation args} {
+    variable feeds
+
+    # Initialize the feed if it doesn't already exist.
+    if {![info exists feeds] || ![dict exists $feeds $fid]} {
+        dict set feeds $fid {acceptable "" lapsetime "" lapsescript ""
+            lapsecancel "" suspended "" pending ""}
+    }
+
+    # Reset the feed's lapse timeout.
+    if {[dict get $feeds $fid lapsecancel] ne ""} {
+        after cancel [dict get $feeds $fid lapsecancel]
+        dict set feeds $fid lapsecancel ""
+    }
+
+    # Process the requested operation.
+    switch $operation {
+    lapse {
+        # Store arguments into feed structure, defaulting to "".
+        dict set feeds $fid lapsetime [lindex $args 0]
+        dict set feeds $fid lapsescript [lindex $args 1]
+    } accept {
+        # Append the arguments to the list of accepted filters.
+        dict set feeds $fid acceptable [concat\
+            [dict get $feeds $fid acceptable] $args]
+    } reject {
+        # Remove all filters that match any of the argument patterns.
+        set index 0
+        foreach filter [dict get $feeds $fid acceptable] {
+            foreach pattern $args {
+                if {[string match $pattern $filter]} {
+                    dict set feeds $fid acceptable [lreplace\
+                        [dict get $feeds $fid acceptable] $index $index]
+                    incr index -1
+                    break
+                }
+            }
+            incr index
+        }
+    }}
+
+    # Restart the feed's lapse timeout.
+    if {[dict get $feeds $fid lapsetime] ne ""} {
+        dict set feeds $fid lapsecancel [after [dict get $feeds $fid lapsetime]\
+            [list ::wibble::icc::lapse $fid]]
+    }
+}
+
+# Get a list of events on one or more feeds matching any of the filters.
+proc ::wibble::icc::get {fids filters {timeout ""}} {
+    variable feeds
+
+    # Reset the feed lapse timeouts, and check for pending events.
+    set result {}
+    set index 0
+    foreach fid $fids {
+        # Reset the feed's lapse timeout.
+        if {[dict get $feeds $fid lapsecancel] ne ""} {
+            after cancel [dict get $feeds $fid lapsecancel]
+            dict set feeds $fid lapsecancel ""
+        }
+
+        # Gather the pending events that match the request filters.
+        foreach entry [dict get $feeds $fid pending] {
+            foreach filter $filters {
+                if {[string match $filter [lindex $entry 0]]} {
+                    dict set feeds $fid pending [lreplace\
+                        [dict get $feeds $fid pending] $index $index]
+                    lappend result $entry
+                    incr index -1
+                    break
+                }
+            }
+            incr index
+        }
+    }
+
+    # If no acceptable events were pending, wait for one to occur.
+    if {![llength $result]} {
+        # Install wake-up handlers for readability and timeout, as requested.
+        set coro [info coroutine]
+        set socket [namespace tail $coro]
+        if {[set readable [expr {"readable" in $filters && $coro in $fids}]]} {
+            chan event $socket readable [list $coro readable]
+        }
+        if {$timeout ne ""} {
+            lappend filters timeout
+            if {$coro ni $fids} {
+                lappend fids $coro
+            }
+            set timeoutcancel [after $timeout [list $coro timeout]]
+        }
+
+        # Wait for an event.  Maintain each feed's list of suspended coroutines.
+        foreach fid $fids {
+            dict set feeds $fid suspended $coro $filters
+        }
+        set result [list [yield]]
+        foreach fid $fids {
+            dict unset feeds $fid suspended $coro
+        }
+
+        # Remove the readability and timeout handlers.
+        if {$timeout ne "" && [lindex $result 0 0] ne "timeout"} {
+            after cancel $timeoutcancel
+        }
+        if {$readable} {
+            chan event $socket readable ""
+        }
+    }
+
+    # Restart the lapse timeouts for the feeds monitored by this coroutine.
+    foreach fid $fids {
+        if {[dict get $feeds $fid lapsetime] eq ""} {continue}
+
+        if {[dict get $feeds $fid lapsecancel] ne ""} {
+            after cancel [dict get $feeds $fid lapsecancel]
+        }
+        dict set feeds $fid lapsecancel [after [dict get $feeds $fid lapsetime]\
+            [list ::wibble::icc::lapse $fid]]
+    }
+
+    # Return the event data.
+    return $result
+}
+
+# Send event data to the named feeds, or all if "*".
+proc ::wibble::icc::put {fids event args} {
+    variable feeds
+
+    # Expand "*" to a list of all feeds that exist at the time [put] is called.
+    if {$fids eq "*"} {
+        set fids [dict keys $feeds]
+    }
+
+    # Insist on running from the event loop, never from within a coroutine.
+    if {[info coroutine] ne ""} {
+        after 0 [concat [list ::wibble::icc::put $fids $event] $args]
+        return
+    }
+
+    # Send the event to all feeds whose filters accept it.
+    set argument [concat [list $event] $args]
+    foreach fid $fids {
+        if {![dict exists $feeds $fid]} {continue}
+
+        foreach filter [dict get $feeds $fid acceptable] {
+            if {![string match $filter $event]} {continue}
+
+            # Send event to a suspended coroutine watching the feed.
+            set found 0
+            dict for {coro filters} [dict get $feeds $fid suspended] {
+                foreach filter $filters {
+                    if {[string match $filter $event]} {
+                        if {[info commands $coro] ne ""} {
+                            $coro $argument
+                        }
+                        set found 1
+                        break
+                    }
+                }
+            }
+
+            # If no suspended coroutine, enqueue the event.
+            if {!$found} {
+                dict set feeds $fid pending [concat\
+                    [dict get $feeds $fid pending] [list $argument]]
+            }
+            break
+        }
+    }
 }
 
 # =============================== wibble core =================================
@@ -512,106 +485,35 @@ proc ::wibble::sendresponse {response} {
     return -code 6 $response
 }
 
-# New: force refresh of handlers and try again with new request settings.
-proc ::wibble::retryrequest {request} {
-    return -code 7 $request
-}
-
 # Register a zone handler.
-
-# New: in parallel with list, create hierarchical dict of handlers, from which 
-# only handlers matching request path can be easily extracted.
-proc ::wibble::handle {prefix cmd args} {
+proc ::wibble::handle {prefix command args} {
     variable zonehandlers
-    variable zh_dict
-    set prefix [file join / $prefix]
-    set name [namespace eval zone [list namespace which [lindex $cmd 0]]]
-    if {$name eq ""} {
-        error "invalid command name \"$cmd\""
-    }
-    set command [concat [list $name] [lrange $cmd 1 end]]
     lappend zonehandlers $prefix $command $args
-    set h_count [expr [llength $zonehandlers]/3 - 1]
-    dict set zh_dict {*}[file split $prefix/handlers\x0/$h_count] [list $prefix $command $args]
-    
-    # New: return place of newly-added handler in list.
-    return $h_count
 }
 
-# New: change place of handler in zonehandlers list.
-proc ::wibble::promote_handler {old new} {
-    variable zonehandlers
-    set old [expr $old * 3]
-    set new [expr $new * 3]
-    set handler [lrange $zonehandlers $old $old+2]
-    set zonehandlers [lreplace $zonehandlers $old $old+2]
-    set zonehandlers [linsert $zonehandlers $new {*}$handler]
-    build_zone_dict
-}
-
-# New: utility to rebuild zonehandlers dict from scratch.
-proc ::wibble::build_zone_dict {} {
-    variable zonehandlers
-    variable zh_dict
-    set zh_dict [dict create]
-    set h_count 0
-    foreach {prefix command options} $zonehandlers {
-        dict set zh_dict {*}[file split $prefix/handlers\x0/$h_count] [list $prefix $command $options]
-        incr h_count
-    }
-}
-
-# New: return only handlers that are valid matches for give path.
-proc ::wibble::get_handlers {path} {
-    variable zonehandlers
-    variable prequalify_handlers
-    variable zh_dict
-
-    if {!$prequalify_handlers} {
-        return $zonehandlers
-    }
-
-    set zhandlers [list]
-    set handler_dict [dict create]
-    foreach segment [file split $path] {
-        lappend subpath $segment
-        if {[dict exists $zh_dict {*}$subpath handlers\x0]} {
-            set handler_dict [dict merge $handler_dict [dict get $zh_dict {*}$subpath handlers\x0]]
-        }
-    }
-    foreach key [lsort -dict [dict keys $handler_dict]] {
-        lappend zhandlers {*}[dict get $handler_dict $key]
-    }
-    return $zhandlers
-}
-
-# Add, modify, or cancel coroutine cleanup scripts.
-proc ::wibble::cleanup {key script} {
-    upvar #1 cleanup cleanup
-    if {$script ne ""} {
-        dict set cleanup $key $script
-    } else {
-        dict unset cleanup $key
-    }
+# Schedule scripts to run on coroutine cleanup.
+proc ::wibble::cleanup {args} {
+    upvar #2 cleanup cleanup
+    set cleanup [concat $args $cleanup]
 }
 
 # Get an HTTP request from a client.
 proc ::wibble::getrequest {port chan peerhost peerport} {
-    variable clock_seconds
-
     # The HTTP header uses CR/LF line breaks.
     chan configure $chan -translation crlf
 
-    # Receive and parse the first line.  Normalize the path.
-    regexp {^\s*(\S*)\s+(\S*)\s+(\S*)} [getline] _ method uri protocol
+    # Receive and parse the first line.  Process "." and ".." path components.
+    regexp {^\s*(\S*)\s+(\S*)\s+(.*?)\s*$} [getline] _ method uri protocol
     regexp {^([^?]*)(\?.*)?$} $uri _ path query
-    regsub -all {(?:/|^)\.(?=/|$)} [dehex $path] / path
-    while {[regsub {(?:/[^/]*/+|^[^/]*/+|^)\.\.(?=/|$)} $path "" path]} {}
-    regsub -all {//+} /$path / path
+    set path [regsub -all {(?:/|^)\.(?=/|$)} [encoding convertfrom utf-8 [dehex $path]] /]
+    while {[regexp -indices {(?:/[^/]*/+|^[^/]*/+|^)\.\.(?=/|$)} $path range]} {
+        set path [string replace $path {*}$range ""]
+    }
+    set path [regsub -all {//+} /$path /]
 
     # Start building the request structure.
     set request [dict create socket $chan peerhost $peerhost peerport $peerport\
-        port $port rawtime $clock_seconds time [clock format $clock_seconds]\
+        port $port rawtime [clock seconds] time [clock format [clock seconds]]\
         method $method uri $uri path $path protocol $protocol rawheader {}]
 
     # Parse the query string.
@@ -627,13 +529,14 @@ proc ::wibble::getrequest {port chan peerhost peerport} {
     dict set request header [deheader [join [dict get $request rawheader] \n]]
 
     # Process qvalues in accept* headers.
-    foreach {header key} {accept type   accept-charset charset
-    accept-encoding encoding   accept-language language   te transfercoding} {
+    foreach {header key} {accept type accept-charset charset
+    accept-encoding encoding accept-language language} {
         set preferences {}
         if {[dict exists $request header $header]} {
             set options {}
-            dict for {option params} [dict get $request header $header] {
-                if {![string is double -strict [dict getnull $params q]]} {
+            foreach {option params} [dict get $request header $header] {
+                if {![dict exists $params q]
+                 || ![string is double -strict [dict get $params q]]} {
                     lappend options [list $option 1]
                 } elseif {[dict get $params q] > 0} {
                     lappend options [list $option [dict get $params q]]
@@ -649,7 +552,8 @@ proc ::wibble::getrequest {port chan peerhost peerport} {
     # Get and parse the request body, if there is one.
     if {$method eq "POST"} {
         # Get the request body.
-        if {[dict getnull $request header transfer-encoding] eq "chunked"} {
+        if {[dict exists $request header transfer-encoding]
+         && [dict get $request header transfer-encoding] eq "chunked"} {
             # Receive chunked request body.
             set data ""
             while {[scan [getline] %x length] == 1 && $length > 0} {
@@ -663,17 +567,19 @@ proc ::wibble::getrequest {port chan peerhost peerport} {
             set data [getblock [dict get $request header content-length]]
             chan configure $chan -translation crlf
         }
-        dict set request rawpost $data
 
-        # Parse the request body for known content-types.
-        switch [dict getnull $request header content-type ""] {
+        # Parse the request body.
+        dict set request rawpost $data
+        set post ""
+        switch [if {[dict exists $request header content-type ""]} {
+            dict get $request header content-type ""
+        }] {
         multipart/form-data {
             # Interpret multipart/form-data (required for file uploads).
             set data \r\n$data
             set sep \r\n--[dict get $request header content-type boundary]
             set beg [expr {[string first $sep $data] + 2}]
             set end [expr {[string first $sep $data $beg] - 1}]
-            set post ""
             while {$beg < $end} {
                 set beg [expr {[string first \n $data $beg] + 1}]
                 set part [string range $data $beg $end]
@@ -681,14 +587,16 @@ proc ::wibble::getrequest {port chan peerhost peerport} {
                 set val [deheader [string map {\r ""}\
                     [string range $part 0 [expr {$split - 1}]]]]
                 dict set val "" [string range $part [expr {$split + 4}] end]
-                lappend post [dict getnull $val content-disposition name] $val
+                if {[dict exists $val content-disposition name]} {
+                    lappend post [dict get $val content-disposition name] $val
+                } else {
+                    lappend post "" $val
+                }
                 set beg [expr {$end + 3}]
                 set end [expr {[string first $sep $data $beg] - 1}]
             }
-            dict set request post $post
         } text/plain {
             # Interpret text/plain POSTs.
-            set post ""
             foreach elem [lrange [split $data \n] 0 end-1] {
                 regexp {([^\r=]*)(?:(=[^\r]*))?} $elem _ key val
                 if {$val ne ""} {
@@ -696,346 +604,246 @@ proc ::wibble::getrequest {port chan peerhost peerport} {
                 }
                 lappend post $key $val
             }
-            dict set request post $post
         } text/xml {
-            # Interpret text/xml POSTs, used for Web Services.
-            dict set request post xml "" [dehex $data]
-        } application/x-www-form-urlencoded - "" {
-            # Interpret URL-encoded POSTs.
-            dict set request post [dequery $data]
+            # Interpret text/xml POSTs.
+            dict set post xml "" [deurl $data]
+        } application/x-www-form-urlencoded - default {
+            # Interpret URL-encoded POSTs (the default).
+            set post [dequery $data]
         }}
+        dict set request post $post
     }
 
-    # The request has been received and parsed.  Return it to the caller.
     return $request
 }
 
 # Get a response from the zone handlers.
 proc ::wibble::getresponse {request} {
-    variable prequalify_handlers
-
-    # New: optionally get prequalified handlers guaranteed to match request path
-    # thus eliminating need to check path against every handler every time.
-    # Feature activated if prequalify_handlers set to 1, otherwise behavior 
-    # unchanged.
-    set zonehandlers [get_handlers [dict get $request path]]
-    set system [list [dict create options {} request $request response {}]]
+    variable zonehandlers
+    set system [list [dict create options {} request $request]]
 
     # Process all zone handlers.
     foreach {prefix command options} $zonehandlers {
+        set match $prefix
+        if {[string index $match end] ne "/"} {
+            append match /
+        }
 
-        # Run the zone handler on all states with request paths inside the zone.
+        # Run the zone handler on all states with requests in the zone.
         set i 0
-        foreach state $system {
+        foreach {state} $system {
             set path [dict get $state request path]
-
-            # New: use slightly more efficient path matching method, and
-            # eliminate a nesting level in loop.
-            if {!$prequalify_handlers && $prefix ne "/" && [string first $prefix/ $path/]} {
-                incr i
-                continue
-            }
-
-            set suffix [string range $path [string length $prefix] end]
+            if {$path eq $prefix
+             || [string equal -length [string length $match] $match $path]} {
+                set suffix [string range $path [string length $prefix] end]
 
                 # Replace the options in the state dict.
-            dict set state options $options
-            dict set state options prefix $prefix
-            dict set state options suffix $suffix
-            if {[dict exists $options root]} {
-                dict set state options fspath\
-                    [file normalize [dict get $options root]/$suffix]
+                dict set state options $options
+                dict set state options prefix $prefix
+                dict set state options suffix $suffix
+                if {[dict exists $options root]} {
+                    dict set state options fspath\
+                        [dict get $options root]/$suffix
+                }
+
+                # Invoke the handler and process its outcome.
+                try {
+                    {*}$command $state
+                } on 5 outcome {
+                    # [nexthandler]: Update the system and continue processing.
+                    set system [lreplace $system $i $i {*}$outcome]
+                } on 6 outcome {
+                    # [sendresponse]: A response has been obtained.  Return it.
+                    return $outcome
+                }
             }
-
-            # Invoke the handler and process its outcome.
-            try {
-                {*}$command $state
-            } on 5 outcome {
-                # [nexthandler]: Update the system and continue processing.
-                set system [lreplace $system $i $i {*}$outcome]
-                unset outcome
-            } on 6 outcome {
-                # [sendresponse]: A response has been obtained.  Return it.
-                return $outcome
-            } on 7 outcome {
-                # New: If handler radically rewrites request path, optionally
-                # start getrequest process over again with refreshed set of 
-                # handlers to match against.
-
-                # [retryrequest]: New attempt to get response with altered 
-                #                 request parameters.
-                return [getresponse $outcome]
-            }
-
             incr i
         }
     }
 
     # Return 501 as default response.
-    dict create status 501 header {content-type {"" text/plain charset utf-8}}\
+    dict create status 501 header {content-type text/plain}\
         content "not implemented: [dict get $request uri]\n"
-}
-
-# Default send handler: send the response to the client using HTTP.
-proc ::wibble::defaultsend {socket request response} {
-    variable clock_seconds
-
-    # Get the content channel and/or size.
-    set size 0
-    set dict_get_request_method [dict get $request method]
-    set dict_get_response_status [dict get $response status]
-    if {[dict exists $response contentfile]} {
-        set dict_get_response_contentfile [dict get $response contentfile]
-        set size [file size $dict_get_response_contentfile]
-        if {$dict_get_request_method ne "HEAD"} {
-            set file [open $dict_get_response_contentfile]
-            cleanup close_content_file [list chan close $file]
-        }
-    } elseif {[dict exists $response contentchan]} {
-        # New: make channel handling case more similar to file handling case.
-        set file [dict get $response contentchan]
-        if {[dict exists $response contentsize]} {
-            set size [dict get $response contentsize]
-        } else {
-            set size [chan pending input $file]
-        }
-        cleanup close_content_file [list chan close $file]
-    } elseif {[dict exists $response content]} {
-        dict set response content [encoding convertto iso8859-1\
-            [dict get $response content]]
-        set size [string length [dict get $response content]]
-    }
-
-    # Parse range request header, and add content-range and -length headers.
-    set begin 0
-    set end [expr {$size - 1}]
-    if {[regexp {^bytes=(\d*)-(\d*)$} [dict getnull $request header range]\
-            _ begin end] && $dict_get_response_status == 200} {
-        dict set response status 206
-        if {$begin eq "" || $begin >= $size} {
-            set begin 0
-        }
-        if {$end eq "" || $end >= $size || $end < $begin} {
-            set end [expr {$size - 1}]
-        }
-        dict set response header content-range "bytes $begin-$end/$size"
-    }
-    set end_begin_1 [expr {$end - $begin + 1}]
-    dict set response header content-length $end_begin_1
-
-    # Send the response header to the client.
-    chan puts $socket "HTTP/1.1 $dict_get_response_status"
-    chan puts $socket [enheader [dict get $response header]]\n
-
-    # If requested, send the response content to the client.
-    if {$dict_get_request_method ne "HEAD"} {
-        chan configure $socket -translation binary
-        if {[info exists file]} {
-            # Asynchronously send response content from a channel.
-            set coro [info coroutine]
-            chan configure $file -translation binary
-            chan seek $file $begin
-            chan copy $file $socket -size $end_begin_1 \
-                -command [list ::wibble::icc put $coro copydone]
-            if {[llength [set data [icc get $coro copydone]]] == 3} {
-                error [lindex $data 2]
-            }
-        } elseif {[dict exists $response content]} {
-            # Send buffered response content.
-            chan puts -nonewline $socket [string range\
-                [dict get $response content] $begin $end]
-        }
-    }
-
-    # Close the content file or channel.
-    if {[info exists file]} {
-        chan close $file
-        cleanup close_content_file ""
-    }
-
-    # Return 1 to keep going or 0 if the connection needs to close.
-    expr {![string equal -nocase\
-        [dict getnull $request header connection] close]}
 }
 
 # Main connection processing loop.
 proc ::wibble::process {port socket peerhost peerport} {
+    set cleanup {
+        {chan close $file}
+        {chan close $socket}
+        {dict unset ::wibble::icc::feeds $coro}
+    }
     try {
-        # Perform initial configuration.
         set coro [info coroutine]
-        cleanup close_client_socket [list chan close $socket]
-        cleanup unset_feed [list icc destroy $coro]
-        icc configure $coro accept readable copydone
+        icc configure $coro accept readable copydone timeout
         chan configure $socket -blocking 0
-
-        # Main loop.
         while {1} {
-            # Get request from client, then formulate a response to the request.
+            # Get request from client, then formulate a response to the reqeust.
             set request [getrequest $port $socket $peerhost $peerport]
             set response [getresponse $request]
 
-            # Determine which command should be used to send the response.
-            if {[dict exists $response sendcommand]} {
-                set sendcommand [dict get $response sendcommand]
-            } else {
-                set sendcommand ::wibble::defaultsend
+            # Get the content channel and/or size.
+            set size 0
+            if {[dict exists $response contentfile]} {
+                set size [file size [dict get $response contentfile]]
+                if {[dict get $request method] ne "HEAD"} {
+                    set file [open [dict get $response contentfile]]
+                }
+            } elseif {[dict exists $response header content-encoding] &&
+                [dict get $response header content-encoding] eq "gzip"
+            } {
+                set gzip [binary format "H*iH*" "1f8b0800" [clock seconds] "0003"]
+                set content [dict get $response content]
+                append gzip [zlib deflate $content]
+                append gzip [binary format i [zlib crc32 $content]]
+                append gzip [binary format i [string length $content]]
+                set response [dict merge $response {
+                    header {
+                        Vary    Accept-Encoding
+                        Content-Encoding    gzip
+                        Accept-Ranges   bytes
+                    }
+                }]
+                dict set response content $gzip
+                set size [string length [dict get $response content]]
+            } elseif {[dict exists $response contentchan]} {
+                if {[dict exists $response contentsize]} {
+                    set size [dict get $response contentsize]
+                }
+                set file [dict get $response contentchan]
+            } elseif {[dict exists $response content]} {
+                dict set response content [encoding convertto iso8859-1\
+                    [dict get $response content]]
+                set size [string length [dict get $response content]]
             }
 
-            # Invoke the send command, and terminate or continue as requested.
-            if {[{*}$sendcommand $socket $request $response]} {
-                catch {chan flush $socket}
-                unset request response
-            } else {
+            # Try to parse the Range request header if present.
+            set begin 0
+            set end [expr {$size - 1}]
+            if {[dict exists $request header range]
+             && [regexp {^bytes=(\d*)-(\d*)$} [dict get $request header range]\
+                    _ begin end]
+             && [dict get $response status] == 200} {
+                dict set response status 206
+                if {$begin eq "" || $begin >= $size} {
+                    set begin 0
+                }
+                if {$end eq "" || $end >= $size || $end < $begin} {
+                    set end [expr {$size - 1}]
+                }
+            }
+
+            # Add content-length and content-range response headers.
+            dict set response header content-length [expr {$end - $begin + 1}]
+            if {[dict get $response status] == 206} {
+                dict set response header content-range "bytes $begin-$end/$size"
+            }
+
+            # Send the response header to the client.
+            chan puts $socket "HTTP/1.1 [dict get $response status]"
+            foreach {key val} [dict get $response header] {
+                set normalizedkey [lsearch -exact -sorted -inline -nocase {
+                    Accept-Ranges Age Allow Cache-Control Connection
+                    Content-Disposition Content-Encoding Content-Language
+                    Content-Length Content-Location Content-MD5 Content-Range
+                    Content-Type Date ETag Expires Last-Modified Location Pragma
+                    Proxy-Authenticate Retry-After Server Set-Cookie Trailer
+                    Transfer-Encoding Upgrade Vary Via Warning WWW-Authenticate 
+                    Access-Control-Allow-Origin Access-Control-Allow-Credentials 
+                    Access-Control-Expose-Headers Access-Control-Max-Age 
+                    Access-Control-Allow-Methods Access-Control-Allow-Headers
+                } $key]
+                if {$normalizedkey ne ""} {
+                    set key $normalizedkey
+                }
+                foreach line [split $val \n] {
+                    chan puts $socket "$key: $line"
+                }
+            }
+            chan puts $socket ""
+
+            # If requested, send the response content to the client.
+            if {[dict get $request method] ne "HEAD"} {
+                chan configure $socket -translation binary
+                if {[info exists file]} {
+                    # Asynchronously send response content from a channel.
+                    chan configure $file -translation binary
+                    chan seek $file $begin
+                    chan copy $file $socket -size [expr {$end - $begin + 1}]\
+                        -command [list ::wibble::icc put $coro copydone]
+                    if {[llength [set data [icc get $coro copydone]]] == 3} {
+                        error [lindex $data 2]
+                    }
+                } elseif {[dict exists $response content]} {
+                    # Send buffered response content.
+                    chan puts -nonewline $socket [string range\
+                        [dict get $response content] $begin $end]
+                }
+            }
+
+            # Close the content file or channel.
+            if {[info exists file]} {
+                chan close $file
+                unset file
+            }
+
+            # Flush the outgoing buffer.
+            if {[dict exists $request header connection] && [dict get $request header connection] eq "close"} {
                 chan close $socket
                 break
+            } else {
+                chan flush $socket
             }
+            unset request
         }
     } on error {"" options} {
-        # Pass errors to the panic handler.
-        foreach var {request response} {
-            if {![info exists $var]} {
-                set $var {}
+        # Log errors and report them to the client, if possible.
+        variable errorcount
+        incr errorcount
+        set message "*** INTERNAL SERVER ERROR (BEGIN #$errorcount) ***"
+        if {[info exists request]} {
+            foreach {key val} [dumprequest $request] {
+                append message "\n$key: $val"
             }
+        } else {
+            append message "\nsocket: $socket"
+            append message "\npeerhost: $peerhost"
+            append message "\npeerport: $peerport"
+            append message "\nrawtime: [clock seconds]"
+            append message "\ntime: [clock format [clock seconds]]"
         }
-        panic $options $port $socket $peerhost $peerport $request $response
+        append message "\nerrorinfo: [dict get $options -errorinfo]"
+        append message "\n*** INTERNAL SERVER ERROR (END #$errorcount) ***"
+        log $message
+        catch {
+            set message [encoding convertto iso8859-1 $message]
+            chan configure $socket -translation crlf
+            chan puts $socket "HTTP/1.1 500 Internal Server Error"
+            chan puts $socket "Content-Type: text/plain"
+            chan puts $socket "Content-Length: [string length $message]"
+            chan puts $socket "Connection: close"
+            chan puts $socket ""
+            chan configure $socket -translation binary
+            chan puts $socket $message
+        }
     } finally {
         # Always run scheduled cleanup scripts on coroutine termination.
-        foreach script [lreverse [dict values $cleanup]] {
+        foreach script $cleanup {
             catch $script
         }
     }
 }
 
 # Listen for incoming connections.
-proc ::wibble::listen {port {socketcommand socket}} {
-    variable clock_seconds
-    # New: start storing and updating current time in namespace var to save 
-    # having to do multiple redundant calls to [clock seconds]
-    if {![info exists clock_seconds]} {update_clock_seconds}
-    {*}$socketcommand -server [list apply {{port socket peerhost peerport} {
+proc ::wibble::listen {port} {
+    socket -server [list apply {{port socket peerhost peerport} {
         coroutine $socket ::wibble::process $port $socket $peerhost $peerport
     } ::wibble} $port] $port
 }
 
-# ========================= customizable procedures ===========================
-
-# Log a message.  Feel free to replace this procedure as needed.
+# Log an error.  Feel free to replace this procedure as needed.
 proc ::wibble::log {message} {
     chan puts stderr $message
-}
-
-# Log errors and report them to the client, if possible.  Customize as needed.
-proc ::wibble::panic {options port socket peerhost peerport request response} {
-    variable clock_seconds
-    variable errorcount
-    incr errorcount
-    set message "*** INTERNAL SERVER ERROR (BEGIN #$errorcount) ***"
-    if {[dict size $request]} {
-        dict for {key val} [dumpstate $request] {
-            append message "\n$key: $val"
-        }
-    } else {
-        append message "\nport: $port"
-        append message "\nsocket: $socket"
-        append message "\npeerhost: $peerhost"
-        append message "\npeerport: $peerport"
-        append message "\nrawtime: $clock_seconds"
-        append message "\ntime: [clock format $clock_seconds]"
-    }
-    append message "\nerrorinfo: [dict get $options -errorinfo]"
-    append message "\n*** INTERNAL SERVER ERROR (END #$errorcount) ***"
-    log $message
-    if {![dict exists $response nonhttp] && $socket ne ""} {
-        catch {
-            chan configure $socket -translation crlf
-            chan puts $socket "HTTP/1.1 500 Internal Server Error"
-            chan puts $socket "Content-Type: text/plain;charset=utf-8"
-            chan puts $socket "Content-Length: [string length $message]"
-            chan puts $socket "Connection: close"
-            chan puts $socket ""
-            chan configure $socket -translation lf -encoding utf-8
-            chan puts $socket $message
-        }
-    }
-}
-
-package provide wibble $::wibble::version
-
-# =============================== example code ================================
-
-# Demonstrate Wibble if being run directly.
-if {$argv0 eq [info script]} {
-    # Guess the root directory.
-    set root [file normalize [file dirname [info script]]]
-    if {[file isdirectory [file join $root docroot]]} {
-        set root [file join $root docroot]
-    }
-
-    # Define zone handlers.
-    set ::wibble::zonehandlers {}
-    ::wibble::handle /vars vars
-    ::wibble::handle / dirslash root $root
-    ::wibble::handle / indexfile root $root indexfile index.html
-    ::wibble::handle / contenttype typetable {
-application/javascript  ^js$                  application/json  ^json$
-application/pdf ^pdf$                         audio/mid      ^(?:midi?|rmi)$
-audio/mp4       ^m4a$                         audio/mpeg     ^mp3$
-audio/ogg       ^(?:flac|og[ag]|spx)$         audio/vnd.wave ^wav$
-audio/webm      ^webm$                        image/bmp      ^bmp$
-image/gif       ^gif$                         image/jpeg     ^(?:jp[eg]|jpeg)$
-image/png       ^png$                         image/svg+xml  ^svg$
-image/tiff      ^tiff?$                       text/css       ^css$
-text/html       ^html?$                       text/plain     ^txt$
-text/xml        ^xml$                         video/mp4      ^(?:mp4|m4[bprv])$
-video/mpeg      ^(?:m[lp]v|mp[eg]|mpeg|vob)$  video/ogg      ^og[vx]$
-video/quicktime ^(?:mov|qt)$                  video/x-ms-wmv ^wmv$
-    }
-    ::wibble::handle / staticfile root $root
-    ::wibble::handle / scriptfile root $root
-    ::wibble::handle / templatefile root $root
-    ::wibble::handle / dirlist root $root
-    ::wibble::handle / notfound
-
-    # Start a server, enter the event loop, and provide a console if needed.
-    if {[catch {::wibble::listen 8080}]} {
-        # If Wibble is already loaded, do nothing.
-    } elseif {[catch {package present Tk}]} {
-        # If there's no Tk, provide no interface, and only enter the event loop.
-        vwait forever
-    } elseif {![catch {console show}]} {
-        # Use the built-in Tk console if it's there, but customize it a bit.
-        wm withdraw .
-        console eval [list proc ReloadWibble {} [list consoleinterp eval [list\
-            source [info script]]]]
-        console eval {
-            wm title . "Wibble Web Server"
-            wm protocol . WM_DELETE_WINDOW exit
-            .menubar.file delete 1
-            .menubar.file insert 1 command -label "Reload Wibble" -underline 0\
-                -accelerator Ctrl+R -command ReloadWibble
-            .menubar.file entryconfigure 2 -accelerator Ctrl+L
-            bind . <Control-r> ReloadWibble
-        }
-    } else {
-        # Or provide a command entry window and use normal logging.
-        wm title . "Wibble Web Server"
-        wm protocol . WM_DELETE_WINDOW exit
-        pack [text .e -height 2] -fill both -expand 1
-        bind .e <Return> {
-            if {!(%s & 4) && [info complete [set command [.e get 0.1 end]]]} {
-                set nextid [history nextid]
-                history add $command
-                if {![catch $command result]} {
-                    ::wibble::log "$nextid %% $command<OK>$result"
-                    .e delete 0.1 end
-                } else {
-                    ::wibble::log "$nextid %% $command<ERROR>$result"
-                }
-                break
-            }
-        }
-        focus .e
-    }
 }
 
 # vim: set sts=4 sw=4 tw=80 et ft=tcl:

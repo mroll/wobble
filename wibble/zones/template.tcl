@@ -21,24 +21,16 @@ proc tml-cached { file what } {
     return $cache
 }
 
-proc ::wibble::zone::template.tml {state} {
-    set options [dict merge { sources .tml extn .tml } [dict get $state options]]
-
-    dict with state request {}; dict with options {}
-
-    if {[file readable $fspath.tml]} {
-
-	set dir [string range $fspath 0 [expr [string length $fspath] - [string length $suffix] -2]]
-
-	foreach d [lrange [split ./$suffix /] 0 end-1] {
-	    if { [set cache [tml-cached $dir/$sources if-changed]] ne {} } { eval $cache }
-	    append dir / $d
-	}
-
-        dict set state response status 200
-        dict set state response content [template [tml-cached $fspath$extn cache]]
-
-        sendresponse [dict get $state response]
+proc ::wibble::template { state } {
+    dict with state request {}; dict with state options {}
+    if {[file readable $fspath.tmpl] && (![file readable $fspath.script] \
+        || [file mtime $fspath.script] < [file mtime $fspath.tmpl])} {
+            set chan [open $fspath.tmpl]
+            set tmpl [read $chan]
+            chan close $chan
+            set chan [open $fspath.script w]
+            chan puts -nonewline $chan\
+            [compiletemplate "dict set state response content" $tmpl]
+            chan close $chan
     }
 }
-

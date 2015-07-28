@@ -1,8 +1,10 @@
 # Rewrite directory requests to search for an indexfile.
 #
-proc ::wibble::zone::indexfile {state} {
+
+proc ::wibble::indexfile {state} {
+    set indexfile index.html
     dict with state request {}; dict with state options {}
-    if {[file isdirectory $fspath]} {
+    if {[file isdirectory [dict? $state options fspath]]} {
         if {[string index $path end] ne "/"} {
             append path /
         }
@@ -11,4 +13,3 @@ proc ::wibble::zone::indexfile {state} {
         nexthandler $newstate $state
     }
 }
-

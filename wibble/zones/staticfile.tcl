@@ -1,6 +1,6 @@
 # Send static files.
 #
-proc ::wibble::zone::staticfile {state} {
+proc ::wibble::staticfile {state} {
     dict with state request {}; dict with state options {}
     if {![file isdirectory $fspath] && [file exists $fspath]} {
         dict set state response status 200

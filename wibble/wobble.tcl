@@ -1,9 +1,10 @@
-#!/usr/bin/env tclkit8.6
+#!/usr/local/bin/tclsh8.6
 #
 
-lappend auto_path  /home/john/lib/tcllib1.13 /Users/john/lib/tcllib1.13
+lappend auto_path  /home/matt/lib/tcllib1.13 /Users/matt/lib/tcllib1.13
 
 source icc.tcl
+source utility.tcl
 source wibble.tcl
 
 
@@ -28,7 +29,7 @@ source zones/template.tcl
 source zones/authenticate.tcl
 source zones/authorize.tcl
 
-source modules/passwd-1.0.tm
+source modules/passwd-1.0.tcl
 source modules/cgi.tcl
 source modules/websocket.tcl
 source modules/session-file.tcl
@@ -43,66 +44,34 @@ if { 0 } {
 
 set argv [lassign $argv option]
 
-switch -- $option {
- server {}
- email  -
- passwd {
-    lassign $argv name pass email
 
-    wibble::passwords set $::passwords $name $option	\
-    	[if { $option eq "passwd" } { wibble::hmac $pass } else { set email }]
-    exit
- }
+proc ::ws-demo { event sock { data {} } } {
+    switch $event {
+        message { 
+        puts "WS-Demo: $event $sock $data"
+        }
+    }
 }
 
-    set root [file normalize [file dirname [info script]]]
+if {$argv0 eq [info script]} {
+    set root [lindex $argv 0]
+    source [lindex $argv 1]
 
-#    wibble::passwd data {
-#	john	XXXX	john@june.com
-#	may	YYYY	 may@june.com
-#	june	YYYY	june@june.com
-#    }
-#    wibble::groups data {
-#	losers { john may june }
-#	lusers { $losers }
-#    }
+    # Define zone handlers.
+    ::wibble::handle /vars vars
+    ::wibble::handle / dirslash root $root
+    ::wibble::handle / indexfile root $root indexfile index.html
+    ::wibble::handle / staticfile root $root
+    ::wibble::handle / template root $root
+    ::wibble::handle / script root $root
+    ::wibble::handle / dirlist root $root
+    ::wibble::handle / notfound
 
-#    wibble::access data {
-#	/Front+Page	{ admin  rw default ro }
-#	/		{ lusers rw }
-#	/data		{ data   ro }
-#    }
+    ::wibble::handle /src template root $root
 
-#    wibble::passwd file etc/passwd
-#    wibble::groups file etc/groups
-#    wibble::access file etc/access .access
 
-    proc ::ws-demo { event sock { data {} } } {
-	switch $event {
-	    message { 
-		puts "WS-Demo: $event $sock $data"
-	    }
-	}
+    catch {
+        ::wibble::listen 8080
+        vwait forever
     }
-
-#    wibble::handle /      authenticate
-#    wibble::handle /      authorize access { $user ne guest }
-
-    wibble::handle /vars  vars
-
-#    wibble::handle /	  cgi 		root $root match *.sh exec yes	
-
-    wibble::handle /src   dirslash 	root $root
-    wibble::handle /src   dirlist 	root $root
-    wibble::handle /src   indexfile 	root $root indexfile index.html
-    wibble::handle /src   staticfile 	root $root
-
-#    wibble::handle /	  post-parse
-
-    wibble::handle /      template 	root $root
-    wibble::handle /      scriptfile 	root $root
-    wibble::handle /      notfound
-
-    wibble::listen 8080
-    vwait forever
-
+}

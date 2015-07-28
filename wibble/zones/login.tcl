@@ -1,11 +1,8 @@
-# Execute scripts.
-#
-proc ::wibble::script {state} {
+proc ::wibble::login { state } {
     dict with state request {}; dict with state options {}
-    if {[file readable $fspath.script]} {
+    if {[file readable $root$prefix.script]} {
         dict set state response status 200
-        source $fspath.script
+        source $root$prefix.script
         sendresponse [dict get $state response]
     }
 }
-

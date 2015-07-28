@@ -1,6 +1,6 @@
 # Generate directory listings.
 #
-proc ::wibble::zone::dirlist {state} {
+proc ::wibble::dirlist {state} {
 
     dict with state request {}; dict with state options {}
     if {![file isdirectory $fspath]} {

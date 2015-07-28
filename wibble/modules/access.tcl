@@ -1,4 +1,3 @@
-
 proc wibble::dotaccess { path user } {
 	set ugroups [groups $user]
         lappend ugroups $user
@@ -22,50 +21,56 @@ namespace eval wibble {
 		variable file   {}
 		variable date    0
 
-	proc data { data } {
-	    variable passwd
+        proc data { data } {
+            variable passwd
 
-	    foreach line [split $data \n] {
-		lassign $line name pass email
-		dict set passwd $name passwd $pass
-		dict set passwd $name email  $email
-	    }
-	}
-	proc file { file } { variable file;    data [read $file] }
-	proc read { file } {
-	    variable date [file mtime $file]
+            foreach line [split $data \n] {
+                lassign $line name pass email
+                dict set passwd $name passwd $pass
+                dict set passwd $name email  $email
+            }
+        }
 
-	    K [::read -nonewline [set fp [open $file]]] [close $fp]
-	}
-	proc write { passwd file } {
-	    set fp [open $file w]
-	    dict for { name values } $passwd {
-		dict with values {}
+        proc file { file } { variable file;    data [read $file] }
 
-		puts $fp "[format %10.10s $name] $passwd $email"
-	    }
-	    close $fp
-	}
-	proc update   { name option value } {
-	        variable passwd
-		variable file
+        proc read { file } {
+            variable date [file mtime $file]
 
-	    dict set passwd $name $option $value
-	    write $passwd $file
-	}
-	proc check { user pass } {
-	    	variable passwd
-		variable file
-		variable date
+            K [::read -nonewline [set fp [open $file]]] [close $fp]
+        }
 
-	    if { $date && $date < [file mtime $file] } { read $file }
+        proc write { passwd file } {
+            set fp [open $file w]
+            dict for { name values } $passwd {
+                dict with values {}
 
-	    if { $user != {} && $pass != {} } {
-		set pass [wibble::hmac $pass]
+                puts $fp "[format %10.10s $name] $passwd $email"
+            }
+            close $fp
+        }
 
-		return [expr $pass eq [dict? $passwd $user passwd]]
-	    }
-	}
-	namespace ensemble create -subcommands { data file read write update check }
+        proc update   { name option value } {
+                variable passwd
+            variable file
+
+            dict set passwd $name $option $value
+            write $passwd $file
+        }
+
+        proc check { user pass } {
+            puts here
+            variable passwd
+            variable file
+            variable date
+
+            if { $date && $date < [file mtime $file] } { read $file }
+
+            if { $user != {} && $pass != {} } {
+                set pass [wibble::hmac $pass]
+                return [expr $pass eq [dict? $passwd $user passwd]]
+            }
+        }
+
+        namespace ensemble create -subcommands { data file read write update check }
     }
 }

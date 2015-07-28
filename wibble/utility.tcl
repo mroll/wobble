@@ -52,7 +52,7 @@ proc wibble::setcookie { response name value args } {
     dict lappend r header Set-Cookie [wibble::cookie $name $value {*}$args]
 }
 
-proc wibble::dict? { args } {		# This is really annoying!!
+proc dict? { args } {		# This is really annoying!!
     try { dict get {*}$args
     } on error message {
 	puts "dict? : $message"

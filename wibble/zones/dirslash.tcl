@@ -1,6 +1,6 @@
 # Redirect when a directory is requested without a trailing slash.
 #
-proc ::wibble::zone::dirslash {state} {
+proc ::wibble::dirslash {state} {
     dict with state request {}; dict with state options {}
     if {[file isdirectory $fspath] && [string index $suffix end] ni {/ ""}} {
         append path /
