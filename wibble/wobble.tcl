@@ -55,7 +55,7 @@ proc ::ws-demo { event sock { data {} } } {
 
 if {$argv0 eq [info script]} {
     set root [lindex $argv 0]
-    source [lindex $argv 1]
+    source   [lindex $argv 1]
 
     # Define zone handlers.
     ::wibble::handle /vars vars
