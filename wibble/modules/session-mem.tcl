@@ -1,28 +1,29 @@
 
 namespace eval wibble {
     namespace eval session {
-	variable sessons
+        variable sessons
 
-	proc check { request } {
-	    variable sessions
+        proc check { request } {
+            variable sessions
 
-	    if { [info exists sessions([set cook [dict? $request header cookie $::cookie {}]])] } {
-		dict set request session $sessions($cook)
-	    }
-	}
+            if { [info exists sessions([set cook [dict? $request header cookie $::cookie {}]])] } {
+            dict set request session $sessions($cook)
+            }
+        }
 
-	proc login { user request responce } {
-	    setcookie response $::cookie [set cook [hmac [entropy]]] -expires +1days
-	    dict set request session [write [list user $user]]
-	}
-	proc logout { responce } {
-	}
+        proc login { user request responce } {
+            setcookie response $::cookie [set cook [hmac [entropy]]] -expires +1days
+            dict set request session [write [list user $user]]
+        }
 
-	proc value { args } {
-	    variable sessions
-	    foreach { name value } { dict set sessions($cook) $name $value }
-	}
+        proc logout { responce } {
+        }
 
-	namespace ensemble create -subcommands { check login logout value }
+        proc value { args } {
+            variable sessions
+            foreach { name value } { dict set sessions($cook) $name $value }
+        }
+
+        namespace ensemble create -subcommands { check login logout value }
     }
 }

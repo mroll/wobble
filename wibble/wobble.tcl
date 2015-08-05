@@ -9,6 +9,7 @@ source wibble.tcl
 
 
 package require wibble
+package require sha256
 
 source zones/vars.tcl
 
@@ -33,9 +34,10 @@ source modules/passwd-1.0.tcl
 source modules/cgi.tcl
 source modules/websocket.tcl
 source modules/session-file.tcl
+source modules/user.tcl
 
 
-proc wibble::entropy {}     { set fp [open /dev/random];  K [read $fp 16] [close $fp] }
+proc entropy {}     { set fp [open /dev/random];  K [read $fp 16] [close $fp] }
 
 if { 0 } {
     source secure.tcl

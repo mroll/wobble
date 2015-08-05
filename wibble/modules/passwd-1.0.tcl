@@ -14,9 +14,8 @@ namespace eval passwd {
         variable passwd
 
         foreach line [split [string trim $data] \n] {
-            lassign $line name pass email
-            dict set passwd $name passwd $pass
-            dict set passwd $name email  $email
+            lassign $line name pass
+            dict set passwd $name passwd [hash $pass]
         }
     }
 

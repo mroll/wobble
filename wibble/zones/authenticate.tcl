@@ -10,5 +10,5 @@ proc wibble::authenticate { state } {
             # nexthandler [dict set state request session [list user guest]]
         }
     }
-    nexthandler [session setup $state]
+    nexthandler $state
 }

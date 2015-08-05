@@ -7,34 +7,34 @@ namespace eval wibble {
             variable lock
             if { [file isfile lock/[set cook [dict? $request header cookie $::cookie {}]]] } {
                 touch lock/$cook
-                dict set request session [wibble::session read $cook]
+                dict set request session [read $cook]
                 return 1
             }
 
             return 0
         }
 
-        proc login { user request response } {
-            setcookie response $::cookie [set cook [hmac [entropy]]] -expires +1days
-            dict set request session [write [list user $user]]
-            # return [dict? $request]
+        proc login { user state } {
+            setcookie state $::cookie [set cook [sha2::hmac [entropy] $user]] -expires +1days
+            dict set state request session [write $cook]
         }
 
-        proc logout { responce } {
-        }
+        proc logout { response } { }
 
-        proc write {} {
+        proc write { cook } {
             variable lock
             variable sessions
 
-            return [set $sessions($cook) ...]
+            touch lock/$cook
+
+            return $cook
         }
 
-        proc read {} { 
+        proc read { cook } { 
             variable lock
             variable sessions
 
-            set sessions($cook) ...
+            return $cook
         }
 
         namespace ensemble create -subcommands { file check login logout }

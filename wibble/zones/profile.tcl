@@ -1,0 +1,3 @@
+proc ::wibble::profile { state } {
+
+}
