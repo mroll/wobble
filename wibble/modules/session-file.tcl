@@ -1,6 +1,5 @@
 namespace eval wibble {
     namespace eval session {
-        variable sessons
         variable lock
 
         proc check { request } {
@@ -23,7 +22,6 @@ namespace eval wibble {
 
         proc write { cook } {
             variable lock
-            variable sessions
 
             touch lock/$cook
 
@@ -32,7 +30,6 @@ namespace eval wibble {
 
         proc read { cook } { 
             variable lock
-            variable sessions
 
             return $cook
         }
