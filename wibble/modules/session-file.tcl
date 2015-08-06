@@ -1,12 +1,13 @@
 namespace eval wibble {
     namespace eval session {
         variable lock
+        variable sessions {}
 
         proc check { request } {
             variable lock
             if { [file isfile lock/[set cook [dict? $request header cookie $::cookie {}]]] } {
                 touch lock/$cook
-                dict set request session [read $cook]
+                dict set request session $cook
                 return 1
             }
 
@@ -15,25 +16,33 @@ namespace eval wibble {
 
         proc login { user state } {
             setcookie state $::cookie [set cook [sha2::hmac [entropy] $user]] -expires +1days
-            dict set state request session [write $cook]
+            dict set state request header cookie $::cookie [list {} [write $user $cook]]
         }
 
-        proc logout { response } { }
+        proc logout { state } { file delete lock/[getcookie $state] }
 
-        proc write { cook } {
-            variable lock
+        proc write { user cook } {
+            variable sessions
 
-            touch lock/$cook
+            echo $user >> lock/$cook
+            dict set sessions $cook user $user
 
             return $cook
         }
 
-        proc read { cook } { 
-            variable lock
+        proc read { file } { K [::read -nonewline [set fp [open $file]]] [close $fp] }
 
-            return $cook
+        proc user { cook } { variable sessions; return [dict? $sessions $cook user] }
+
+        proc getcookie { state } { return [dict? $state request header cookie $::cookie {}] }
+
+        proc load { } {
+            variable sessions
+            foreach f [glob -nocomplain -directory lock *] {
+                dict set sessions [last [split $f /]] user [read $f] 
+            }
         }
 
-        namespace ensemble create -subcommands { file check login logout }
+        namespace ensemble create -subcommands { file check login logout user getcookie load }
     }
 }

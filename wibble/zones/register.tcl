@@ -4,5 +4,5 @@ proc ::wibble::register { state } {
 
     user new $name $pass 
 
-    nexthandler [dict? $state]
+    redirect /profile [session login $name $state]
 }

@@ -10,7 +10,7 @@ namespace eval user {
             file mkdir $dir/$name
             file mkdir $dir/$name/msgs
 
-            echo "$name $pass" >> passwd::file
+            passwd update $name pass [passwd::hash $pass]
         }
     }
 

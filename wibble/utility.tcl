@@ -61,3 +61,4 @@ proc dict? { args } {        # This is really annoying!!
     }
 }
 
+proc last { list } { lindex $list end }

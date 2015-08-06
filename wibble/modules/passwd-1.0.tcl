@@ -15,7 +15,7 @@ namespace eval passwd {
 
         foreach line [split [string trim $data] \n] {
             lassign $line name pass
-            dict set passwd $name passwd [hash $pass]
+            dict set passwd $name pass $pass
         }
     }
 
@@ -26,10 +26,13 @@ namespace eval passwd {
 
         if { $date && $date < [::file mtime $file] } { read $file }
 
-        expr { $user != {} && $pass != {} && [hash $pass] eq [dict? $passwd $user passwd] }
+        expr { $user != {} && $pass != {} && [hash $pass] eq [dict? $passwd $user pass] }
     }
 
-    proc file { filename } { variable file $filename; data [read $file] }
+    proc file { filename } { 
+        variable file $filename
+        if {[::file exists $filename]} { data [read $file] }
+    }
 
     proc read { file } {
         variable date [::file mtime $file]
@@ -42,7 +45,7 @@ namespace eval passwd {
         dict for { name values } $passwd {
             dict with values {}
 
-            puts $fp "[format %10.10s $name] $passwd $email"
+            puts $fp "$name $pass"
         }
         close $fp
     }
@@ -52,6 +55,7 @@ namespace eval passwd {
         variable file
 
         dict set passwd $name $field $value
+        puts [dict? $passwd $name $field]
         write $passwd $file
     }
 

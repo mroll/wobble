@@ -7,7 +7,6 @@ proc wibble::authenticate { state } {
             nexthandler [session login $user $state]
         } else {
             redirect /login
-            # nexthandler [dict set state request session [list user guest]]
         }
     }
     nexthandler $state

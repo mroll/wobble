@@ -30,6 +30,8 @@ source zones/template.tcl
 source zones/authenticate.tcl
 source zones/authorize.tcl
 
+source zones/deauthenticate.tcl
+
 source modules/passwd-1.0.tcl
 source modules/cgi.tcl
 source modules/websocket.tcl
